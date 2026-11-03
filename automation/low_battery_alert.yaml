@@ -1,0 +1,59 @@
+blueprint:
+  name: Lågt Batteri (per etikett)
+  description: >-
+    Skickar en avisering när någon enhet märkt med en vald etikett går under
+    en batteriniva. Lägg etiketten på de enheter du vill övervaka på valfri
+    Home Assistant-installation — inget behov av att hårdkoda entiteter.
+  domain: automation
+  author: athornblom
+  source_url: https://github.com/athornblom/ha-blueprints/blob/main/automation/low_battery_alert.yaml
+  homeassistant:
+    min_version: "2026.7.0"
+  input:
+    battery_label:
+      name: Batterietikett
+      description: Etiketten som sitter på de enheter vars batterinivå ska övervakas.
+      selector:
+        label: {}
+    threshold_percent:
+      name: Tröskelvärde
+      description: Avisera när batterinivån går under denna procent.
+      default: 15
+      selector:
+        number:
+          min: 1
+          max: 100
+          unit_of_measurement: "%"
+          mode: slider
+    notify_action:
+      name: Avisering
+      description: >-
+        Vad som ska hända när ett batteri går under tröskeln. Standard
+        skickar en avisering (notify.notify) till alla registrerade enheter
+        med namn och aktuell nivå. Byt ut mot egna notify-mål vid behov
+        (t.ex. en specifik telefon eller kritisk push).
+      default:
+        - action: notify.notify
+          data:
+            title: "🔋 Lågt batteri"
+            message: >-
+              {{ state_attr(trigger.entity_id, 'friendly_name') }} har lågt
+              batteri ({{ states(trigger.entity_id) }}%)
+      selector:
+        action: {}
+
+mode: queued
+max: 10
+
+triggers:
+  - trigger: battery.level_crossed_threshold
+    target:
+      label_id: !input battery_label
+    options:
+      threshold:
+        type: below
+        value:
+          number: !input threshold_percent
+      behavior: each
+
+actions: !input notify_action
