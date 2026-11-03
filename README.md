@@ -12,7 +12,7 @@ Only rename or remove an input's key if you're prepared to re-select inputs on e
 
 ## Blueprints
 
-### `automation/low_battery_alert.yaml` — Lågt Batteri (per etikett)
+### `automation/low_battery_alert.yaml` — Low Battery (by label)
 
 Notifies when any entity carrying a chosen label drops below a battery
 percentage threshold. Point it at a label (e.g. `batteri`) instead of
