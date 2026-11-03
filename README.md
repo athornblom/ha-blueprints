@@ -1,7 +1,6 @@
 # ha-blueprints
 
-Personal Home Assistant blueprints, shared across multiple installations
-(home, parents').
+Home Assistant blueprints, shared across multiple installations.
 
 ## Updating a blueprint
 
