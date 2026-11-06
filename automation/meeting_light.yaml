@@ -1,0 +1,121 @@
+blueprint:
+  name: Meeting Light
+  description: >-
+    Turns one or more color lights red (or any chosen color) while a
+    meeting is in progress, then restores them to exactly how they were
+    before — on with the same color/brightness, or off.
+
+
+    A meeting is "in progress" while **any** of the chosen indicator
+    entities is `on` — e.g. a microphone/camera-in-use binary sensor from
+    the Companion App, a work calendar, or a manual input_boolean. The
+    light stays red until **all** of them are off, so two people working
+    from home can share one lamp.
+
+
+    Note: a calendar entity is `on` during every event on it, including
+    all-day events — use a calendar that only holds meetings.
+  domain: automation
+  author: athornblom
+  source_url: https://github.com/athornblom/ha-blueprints/blob/main/automation/meeting_light.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    meeting_entities:
+      name: Meeting indicators
+      description: >-
+        Entities that are `on` while someone is in a meeting. Add one or
+        more per person (mic in use, camera in use, work calendar, manual
+        toggle).
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain:
+                - binary_sensor
+                - input_boolean
+                - calendar
+                - switch
+    lights:
+      name: Light(s)
+      description: Color light(s) to turn red during meetings.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: light
+    settings:
+      name: Settings
+      icon: mdi:cog
+      collapsed: true
+      input:
+        meeting_color:
+          name: Meeting color
+          default: [255, 0, 0]
+          selector:
+            color_rgb: {}
+        meeting_brightness:
+          name: Meeting brightness
+          default: 100
+          selector:
+            number:
+              min: 1
+              max: 100
+              unit_of_measurement: "%"
+              mode: slider
+
+# queued: every state change is evaluated in order against the current
+# state, and a restore never gets cut off half-way by a new trigger.
+mode: queued
+max: 10
+
+variables:
+  meeting_entities: !input meeting_entities
+  lights: !input lights
+  # One snapshot scene per automation built from this blueprint, so two
+  # instances never overwrite each other's saved state.
+  scene_id: "meeting_light_{{ this.entity_id.split('.')[1] }}"
+  scene_entity: "scene.{{ scene_id }}"
+  in_meeting: "{{ meeting_entities | select('is_state', 'on') | list | count > 0 }}"
+  # The snapshot scene doubles as the "light is currently in meeting mode"
+  # flag: it exists only between turning red and restoring.
+  has_snapshot: "{{ expand(scene_entity) | count > 0 }}"
+
+triggers:
+  - trigger: state
+    entity_id: !input meeting_entities
+    # null `to` = fire on state changes only, not attribute-only updates
+    # (calendars update attributes constantly).
+    to: ~
+  - trigger: homeassistant
+    event: start
+
+actions:
+  - choose:
+      # Meeting started and the light isn't red yet: snapshot, then go red.
+      - conditions:
+          - condition: template
+            value_template: "{{ in_meeting and not has_snapshot }}"
+        sequence:
+          - action: scene.create
+            data:
+              scene_id: "{{ scene_id }}"
+              snapshot_entities: "{{ lights }}"
+          - action: light.turn_on
+            target:
+              entity_id: !input lights
+            data:
+              rgb_color: !input meeting_color
+              brightness_pct: !input meeting_brightness
+
+      # All meetings over and we have a snapshot: restore, then drop it.
+      - conditions:
+          - condition: template
+            value_template: "{{ not in_meeting and has_snapshot }}"
+        sequence:
+          - action: scene.turn_on
+            target:
+              entity_id: "{{ scene_entity }}"
+          - action: scene.delete
+            target:
+              entity_id: "{{ scene_entity }}"

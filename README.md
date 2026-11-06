@@ -25,3 +25,23 @@ automatically, on any instance.
 - `notify_action` (default: broadcast via `notify.notify`) — override to target a specific device or add critical-push flags
 
 **Requires:** Home Assistant 2026.7.0+ (uses the `battery.level_crossed_threshold` purpose-specific trigger).
+
+### `automation/meeting_light.yaml` — Meeting Light
+
+Turns one or more color lights red while a meeting is in progress, then
+restores them to exactly how they were before (including off), via a
+`scene.create` snapshot. "In a meeting" = **any** chosen indicator entity
+is `on`; the light is restored once **all** are off, so several people
+can share one lamp.
+
+**Inputs:**
+- `meeting_entities` (required) — binary_sensor / input_boolean / calendar / switch entities that are `on` during a meeting (e.g. Companion App mic/camera-in-use sensors, a meetings-only calendar, a manual toggle)
+- `lights` (required) — color light(s) to use
+- `meeting_color` (default red `[255, 0, 0]`)
+- `meeting_brightness` (default `100` %)
+
+**Caveat:** the snapshot is held in memory, so a Home Assistant restart or
+a scene reload *during* a meeting loses it — the light then stays red after
+the meeting and has to be reset by hand once.
+
+**Requires:** Home Assistant 2024.10.0+.
