@@ -45,3 +45,23 @@ a scene reload *during* a meeting loses it — the light then stays red after
 the meeting and has to be reset by hand once.
 
 **Requires:** Home Assistant 2024.10.0+.
+
+### `automation/trv_room_sensor_offset.yaml` — Radiator Thermostat Follows Room Sensor
+
+Makes a radiator thermostat (TRV) regulate on a separate room sensor by
+keeping its temperature offset set so the thermostat "sees" the room
+temperature. The target stays whatever is set on the thermostat (+/- on
+the device or in the app); the thermostat keeps doing its own valve
+regulation.
+
+**Inputs:**
+- `thermostat` (required) — the climate entity
+- `offset_entity` (required) — the thermostat's temperature-offset number entity
+- `room_sensor` (required) — the room's temperature sensor (typically the area's)
+- `stop_early_margin` (default `0.5` °C) — thermostat sees the room this much warmer, so it closes before target and stored heat carries the rest
+- `min_change` (default `0.3` °C) — only rewrite the offset when it must move this much (battery)
+- `reading_includes_offset` (default `true`) — whether the thermostat's reported temperature already has the offset applied. **IKEA LILJEBAGGE (Matter): set to `false`** — it reports the raw value. If this is wrong, the offset drifts to its limit or flips back and forth.
+
+**Note:** nothing is written while the thermostat is switched off; the offset catches up when it's turned back on.
+
+**Requires:** Home Assistant 2024.10.0+.

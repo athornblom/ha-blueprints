@@ -1,0 +1,172 @@
+blueprint:
+  name: Radiator Thermostat Follows Room Sensor
+  description: >-
+    Makes a radiator thermostat (TRV) regulate on a separate room
+    temperature sensor instead of its own built-in sensor, which sits next
+    to the radiator and reads wrong.
+
+
+    It does this by keeping the thermostat's temperature offset set so the
+    thermostat "sees" the room temperature. The target temperature stays
+    whatever you set on the thermostat itself (+/- on the device or in the
+    app), and the thermostat keeps doing its own valve regulation.
+
+
+    **Stop-early margin:** the thermostat is made to see the room as this
+    much warmer than it is, so it closes the valve before the room reaches
+    target and the heat still stored in the radiator carries it the rest of
+    the way. The thermostat's display will read room temperature plus this
+    margin.
+
+
+    The offset is only rewritten when it needs to change by at least the
+    "minimum change" below, to spare the batteries of sleepy Thread/Zigbee
+    thermostats. Nothing is written while the thermostat is switched off;
+    the offset catches up as soon as it's turned back on.
+  domain: automation
+  author: athornblom
+  source_url: https://github.com/athornblom/ha-blueprints/blob/main/automation/trv_room_sensor_offset.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    devices:
+      name: Devices
+      icon: mdi:radiator
+      input:
+        thermostat:
+          name: Radiator thermostat
+          selector:
+            entity:
+              filter:
+                - domain: climate
+        offset_entity:
+          name: Thermostat temperature offset
+          description: >-
+            The thermostat's own offset/calibration number entity (often
+            called "Temperature offset" or "Local temperature calibration").
+          selector:
+            entity:
+              filter:
+                - domain: number
+        room_sensor:
+          name: Room temperature sensor
+          description: >-
+            The sensor that represents the room — typically the one set as
+            the area's temperature sensor.
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                  device_class: temperature
+    settings:
+      name: Settings
+      icon: mdi:cog
+      collapsed: true
+      input:
+        stop_early_margin:
+          name: Stop-early margin
+          description: Stop heating this many degrees before the room reaches target.
+          default: 0.5
+          selector:
+            number:
+              min: 0
+              max: 2
+              step: 0.1
+              unit_of_measurement: "°C"
+              mode: slider
+        min_change:
+          name: Minimum offset change
+          description: Only rewrite the offset when it needs to move at least this much.
+          default: 0.3
+          selector:
+            number:
+              min: 0.1
+              max: 2
+              step: 0.1
+              unit_of_measurement: "°C"
+              mode: slider
+        reading_includes_offset:
+          name: Thermostat reading includes the offset
+          description: >-
+            On if the thermostat's reported temperature already has its
+            offset applied (the Matter standard). Turn off for thermostats
+            that report the raw sensor value. If this is wrong, the offset
+            drifts to its limit or flips back and forth.
+          default: true
+          selector:
+            boolean: {}
+
+# single: while a run is waiting for the thermostat to report back after a
+# write (below), new triggers are dropped instead of acting on a stale
+# reading.
+mode: single
+max_exceeded: silent
+
+variables:
+  thermostat: !input thermostat
+  offset_entity: !input offset_entity
+  room_sensor: !input room_sensor
+  margin: !input stop_early_margin
+  min_change: !input min_change
+  includes_offset: !input reading_includes_offset
+  room: "{{ states(room_sensor) | float(none) }}"
+  reported: "{{ state_attr(thermostat, 'current_temperature') | float(none) }}"
+  current_offset: "{{ states(offset_entity) | float(none) }}"
+  # The thermostat's own sensor value with no offset applied.
+  raw: >-
+    {{ none if reported is none or current_offset is none
+       else (reported - current_offset if includes_offset else reported) }}
+  offset_min: "{{ state_attr(offset_entity, 'min') | float(-10) }}"
+  offset_max: "{{ state_attr(offset_entity, 'max') | float(10) }}"
+  desired_offset: >-
+    {{ none if room is none or raw is none
+       else ([[room + margin - raw, offset_min] | max, offset_max] | min) | round(1) }}
+
+triggers:
+  - trigger: state
+    entity_id: !input room_sensor
+  - trigger: state
+    entity_id: !input thermostat
+    attribute: current_temperature
+  # Catch up immediately when the thermostat is switched back on.
+  - trigger: state
+    entity_id: !input thermostat
+    from: "off"
+  - trigger: homeassistant
+    event: start
+
+conditions:
+  # Don't wake a switched-off thermostat; the offset does nothing then.
+  - condition: not
+    conditions:
+      - condition: state
+        entity_id: !input thermostat
+        state: "off"
+  # Skip while any input is unavailable/unknown, and when the offset is
+  # already close enough.
+  - condition: template
+    value_template: >-
+      {{ desired_offset is not none
+         and (desired_offset - current_offset) | abs >= min_change }}
+
+actions:
+  - action: number.set_value
+    target:
+      entity_id: !input offset_entity
+    data:
+      value: "{{ desired_offset }}"
+  # Sleepy thermostats report their new reading minutes after a write. If
+  # that reading includes the offset, evaluating again before it arrives
+  # would compute a wrong raw value and push the offset further, so hold
+  # this run until the thermostat reports (or 20 minutes pass).
+  - if:
+      - condition: template
+        value_template: "{{ includes_offset }}"
+    then:
+      - wait_for_trigger:
+          - trigger: state
+            entity_id: !input thermostat
+            attribute: current_temperature
+        timeout:
+          minutes: 20
+        continue_on_timeout: true
