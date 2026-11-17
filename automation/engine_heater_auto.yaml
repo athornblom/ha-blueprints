@@ -12,9 +12,9 @@ blueprint:
     waiting time, the plug turns off.
 
     - When the heater starts drawing power, it heats for the set time — scaled
-    by the outdoor temperature if you pick a temperature source (counted once
-    per session, so a heater thermostat that cycles doesn't extend it) — and
-    then turns off.
+    by the outdoor temperature from your weather entity (or an outdoor sensor,
+    if you pick one), counted once per session so a heater thermostat that
+    cycles doesn't extend it — and then turns off.
 
     - If nothing draws power shortly after it was turned on, the person who
     turned it on gets a phone notification ("is the cable plugged in?"). If it
@@ -56,17 +56,29 @@ blueprint:
               filter:
                 - domain: sensor
                   device_class: power
+        weather_entity:
+          name: Weather (strongly recommended)
+          description: >-
+            A weather entity with an hourly forecast, e.g. SMHI or Met.no. Its
+            current temperature scales the heating time, and its forecast decides
+            whether the evening check runs. **Without it the evening check runs
+            every chosen evening**, whatever the weather.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: weather
 
     timing_section:
       name: Times
       icon: mdi:timer-outline
       input:
         temperature_entity:
-          name: Outdoor temperature (optional)
+          name: Outdoor temperature sensor (optional)
           description: >-
-            A temperature sensor or a weather entity. When set, the heating time
-            scales with the temperature between the mild and cold times below.
-            Without it (or if it is unavailable) the cold heating time is used.
+            Your own outdoor sensor, used instead of the weather entity's
+            temperature for scaling the heating time. Falls back to the weather
+            entity when unavailable; with neither, the cold heating time is used.
           default: ""
           selector:
             entity:
@@ -213,17 +225,6 @@ blueprint:
                   value: sat
                 - label: Sunday
                   value: sun
-        weather_entity:
-          name: Weather forecast (strongly recommended)
-          description: >-
-            A weather entity with an hourly forecast, so the check only runs
-            when frost is expected. **Without it the check runs every chosen
-            evening**, whatever the weather (also if the forecast can't be read).
-          default: ""
-          selector:
-            entity:
-              filter:
-                - domain: weather
         departure_time:
           name: Departure time
           description: Frost is looked for in the forecast from the check until this time.
@@ -390,12 +391,17 @@ actions:
             state: "off"
         sequence:
           - variables:
-              # Outdoor temperature right now (sensor state or weather attribute).
+              # Outdoor temperature right now: the sensor if set and available,
+              # else the weather entity's current temperature.
               outdoor_temperature: >-
-                {%- if temperature_entity in ['', none] -%}none
-                {%- elif temperature_entity.startswith('weather.') -%}
-                  {{ state_attr(temperature_entity, 'temperature') | float('none') }}
-                {%- else -%}{{ states(temperature_entity) | float('none') }}{%- endif -%}
+                {%- set ns = namespace(t=none) -%}
+                {%- for e in [temperature_entity, weather_entity] -%}
+                  {%- if ns.t is none and e not in ['', none] -%}
+                    {%- set v = state_attr(e, 'temperature') if e.startswith('weather.') else states(e) -%}
+                    {%- if v is number or v | is_number -%}{%- set ns.t = v | float -%}{%- endif -%}
+                  {%- endif -%}
+                {%- endfor -%}
+                {{ ns.t if ns.t is not none else 'none' }}
               # Cold time at/below the cold limit, mild time at/above the mild
               # limit, scaled linearly in between. No temperature → cold time.
               heat_minutes_now: >-
