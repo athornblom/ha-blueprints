@@ -1,0 +1,432 @@
+blueprint:
+  name: Outdoor lighting (sun, lux, schedule & triggers)
+  description: >-
+    Keeps outdoor lights on whenever it is dark, with optional extras.
+
+
+    **Minimum setup:** pick the lights. They turn on when the sun sets below the
+    evening elevation and off when it rises above the morning elevation.
+
+
+    **Optional:** a lux sensor for real darkness detection, a lights-off schedule
+    (for example at night) with a random turn-off delay, and timed lighting from
+    cameras/buttons (needs a timer helper).
+
+
+    Every change re-checks one rule, so the result is always correct — also
+    after a restart or after timed lighting ends:
+
+    `on = (dark AND NOT in lights-off schedule) OR timed lighting running`
+  domain: automation
+  author: athornblom
+  source_url: https://github.com/athornblom/ha-blueprints/blob/main/automation/outdoor_lighting.yaml
+  homeassistant:
+    min_version: "2025.1.0"
+  input:
+    lights_section:
+      name: Lights
+      icon: mdi:lightbulb-group
+      input:
+        target_lights:
+          name: Lights
+          description: >-
+            The lights (or switches) to control. Tip: use a label so you can add
+            lamps later without editing the automation.
+          selector:
+            target:
+              entity:
+                - domain: light
+                - domain: switch
+
+    darkness_section:
+      name: Darkness
+      icon: mdi:weather-sunset-down
+      input:
+        evening_elevation:
+          name: Evening sun elevation
+          description: >-
+            In the evening it counts as dark when the sun is below this
+            elevation. −0.8° is roughly sunset. Lower = later.
+          default: -0.8
+          selector:
+            number:
+              min: -12
+              max: 10
+              step: 0.1
+              unit_of_measurement: "°"
+              mode: slider
+        morning_elevation:
+          name: Morning sun elevation
+          description: >-
+            In the morning it counts as light again when the sun rises above
+            this elevation. −3° is roughly 20 minutes before sunrise in southern
+            Sweden. Lower = earlier.
+          default: -3.0
+          selector:
+            number:
+              min: -12
+              max: 10
+              step: 0.1
+              unit_of_measurement: "°"
+              mode: slider
+
+    lux_section:
+      name: Lux sensor (optional)
+      icon: mdi:brightness-6
+      collapsed: true
+      input:
+        lux_sensor:
+          name: Lux sensor
+          description: >-
+            Optional. The sun elevations above set the window when it may be
+            dark; the lux sensor then confirms it. Dark = inside the window AND
+            lux below the level. Tip: widen the window when you add a sensor
+            (e.g. +3° evening and morning) so lux can decide on cloudy days.
+
+            Below −6° (end of civil twilight) it always counts as dark, so light
+            from your own lamps or a car can't switch them off at night. If the
+            sensor is unavailable, only the sun is used.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                  device_class: illuminance
+        lux_on_level:
+          name: Dark below
+          description: >-
+            Inside the window it is dark when lux stays below this level for 5
+            minutes, and light again when it stays above twice this level.
+          default: 20
+          selector:
+            number:
+              min: 1
+              max: 1000
+              step: 1
+              unit_of_measurement: lx
+              mode: box
+
+    schedule_section:
+      name: Lights-off schedule (optional)
+      icon: mdi:calendar-clock
+      collapsed: true
+      input:
+        off_schedule:
+          name: Lights-off schedule
+          description: >-
+            Optional schedule helper. While it is ON the lights stay off even
+            when dark (timed lighting still works). Create it under Settings →
+            Devices & services → Helpers → Schedule, and drag in the hours when
+            the lights should be off, e.g. 23:00–06:00.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: schedule
+        random_off_minutes:
+          name: Random delay before turning off
+          description: >-
+            When the lights-off schedule starts, wait a random 0 to this many
+            minutes before turning off — a different time every night, so the
+            house looks lived in. 0 = off. Needs the timer helper under "Timed
+            lighting" (the delay survives restarts).
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 120
+              step: 1
+              unit_of_measurement: min
+              mode: slider
+        random_off_at_daybreak:
+          name: Random delay also when it gets light
+          description: >-
+            Also use the random delay when the lights go off because it gets
+            light in the morning (or the lux sensor says it's bright). Off by
+            default: in daylight a random time adds nothing, so the lights go
+            off right at the morning threshold.
+          default: false
+          selector:
+            boolean: {}
+
+    timed_section:
+      name: Timed lighting (optional)
+      icon: mdi:timer-outline
+      collapsed: true
+      input:
+        dark_triggers:
+          name: Triggers — only when dark
+          description: >-
+            For example camera person or motion sensors. They turn the lights on
+            for the duration below, but only when it is dark.
+          default: []
+          selector:
+            trigger: {}
+        always_triggers:
+          name: Triggers — always
+          description: >-
+            For example a button. They turn the lights on for the duration below
+            regardless of darkness or schedule.
+          default: []
+          selector:
+            trigger: {}
+        timed_minutes:
+          name: Duration
+          description: A new trigger restarts the countdown.
+          default: 15
+          selector:
+            number:
+              min: 1
+              max: 240
+              step: 1
+              unit_of_measurement: min
+              mode: slider
+        timer_helper:
+          name: Timer helper
+          description: >-
+            Required when you use any trigger above or the random turn-off
+            delay. Create it under Settings → Devices & services → Helpers →
+            Timer and enable "Restore" so it survives restarts. Its own duration
+            doesn't matter.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: timer
+
+mode: queued
+max: 25
+max_exceeded: silent
+
+trigger_variables:
+  lux_sensor: !input lux_sensor
+  lux_on_level: !input lux_on_level
+  off_schedule: !input off_schedule
+
+triggers:
+  # User triggers first. A trigger group can't carry an id, so the
+  # category is worked out from the trigger's position (see `category`).
+  - triggers: !input dark_triggers
+  - triggers: !input always_triggers
+
+  # Sun crossings. Only the evening threshold while setting and the morning
+  # threshold while rising count as a real change (see `category`).
+  - trigger: numeric_state
+    entity_id: sun.sun
+    attribute: elevation
+    below: !input evening_elevation
+    id: sun_evening
+  - trigger: numeric_state
+    entity_id: sun.sun
+    attribute: elevation
+    above: !input evening_elevation
+    id: sun_evening
+  - trigger: numeric_state
+    entity_id: sun.sun
+    attribute: elevation
+    below: !input morning_elevation
+    id: sun_morning
+  - trigger: numeric_state
+    entity_id: sun.sun
+    attribute: elevation
+    above: !input morning_elevation
+    id: sun_morning
+  # End of civil twilight: below this lux is ignored (always dark).
+  - trigger: numeric_state
+    entity_id: sun.sun
+    attribute: elevation
+    below: -6
+    id: lux_boundary
+  - trigger: numeric_state
+    entity_id: sun.sun
+    attribute: elevation
+    above: -6
+    id: lux_boundary
+
+  # Lux crossings (only fire when a lux sensor is set and reporting).
+  # Dark below the level, light above twice the level, 5 minutes each.
+  - trigger: template
+    value_template: >-
+      {{ lux_sensor not in ['', none]
+         and states(lux_sensor) | float(-1) >= 0
+         and states(lux_sensor) | float(-1) < lux_on_level | float }}
+    for:
+      minutes: 5
+    id: lux_boundary
+  - trigger: template
+    value_template: >-
+      {{ lux_sensor not in ['', none]
+         and states(lux_sensor) | float(-1) > lux_on_level | float * 2 }}
+    for:
+      minutes: 5
+    id: lux_boundary
+
+  # Lights-off schedule (short "for" ignores a blip between adjacent blocks).
+  - trigger: template
+    value_template: "{{ off_schedule not in ['', none] and is_state(off_schedule, 'on') }}"
+    for: "00:00:05"
+    id: schedule_boundary
+  - trigger: template
+    value_template: "{{ off_schedule not in ['', none] and is_state(off_schedule, 'off') }}"
+    for: "00:00:05"
+    id: schedule_boundary
+
+  # Re-checks.
+  - trigger: event
+    event_type: timer.finished
+    event_data:
+      entity_id: !input timer_helper
+    id: recheck
+  - trigger: homeassistant
+    event: start
+    id: recheck
+  - trigger: event
+    event_type: automation_reloaded
+    id: recheck
+
+variables:
+  target_lights: !input target_lights
+  random_off_minutes: !input random_off_minutes
+  random_off_at_daybreak: !input random_off_at_daybreak
+  evening_elevation: !input evening_elevation
+  morning_elevation: !input morning_elevation
+  timer_helper: !input timer_helper
+  timed_minutes: !input timed_minutes
+
+  dark_trigger_list: !input dark_triggers
+  always_trigger_list: !input always_triggers
+  category: >-
+    {%- set n_dark = dark_trigger_list | count -%}
+    {%- set n_always = always_trigger_list | count -%}
+    {%- set tid = trigger.id | string if trigger is defined and trigger.id is defined else 'recheck' -%}
+    {%- set i = trigger.idx | int(-1) if trigger is defined and trigger.idx is defined else -1 -%}
+    {%- set is_rising = state_attr('sun.sun', 'rising') | bool(false) -%}
+    {%- set has_lux = lux_sensor not in ['', none] -%}
+    {%- if tid == 'schedule_boundary' -%}boundary
+    {%- elif tid == 'recheck' -%}recheck
+    {%- elif tid == 'sun_evening' -%}{{ 'recheck' if is_rising else 'boundary' }}
+    {%- elif tid == 'sun_morning' -%}{{ 'boundary' if is_rising else 'recheck' }}
+    {%- elif tid == 'lux_boundary' -%}{{ 'boundary' if has_lux else 'recheck' }}
+    {%- elif 0 <= i < n_dark -%}timed_dark
+    {%- elif n_dark <= i < n_dark + n_always -%}timed_always
+    {%- else -%}recheck{%- endif -%}
+  has_timer: "{{ timer_helper not in ['', none] }}"
+
+  elevation: "{{ state_attr('sun.sun', 'elevation') | float(0) }}"
+  rising: "{{ state_attr('sun.sun', 'rising') | bool(false) }}"
+  sun_dark: "{{ elevation < (morning_elevation if rising else evening_elevation) | float }}"
+  lux_value: >-
+    {{ states(lux_sensor) | float(-1) if lux_sensor not in ['', none] else -1 }}
+  lux_valid: "{{ lux_value | float >= 0 }}"
+  lux_dark: >-
+    {%- set v = lux_value | float -%}
+    {%- set on = lux_on_level | float -%}
+    {%- if v < on -%}true
+    {%- elif v > on * 2 -%}false
+    {%- else -%}{{ v < on * 1.5 }}{%- endif -%}
+  # The sun sets the window; lux (if working) confirms it inside the window.
+  # Below −6° (end of civil twilight) lux is ignored: always dark.
+  is_dark: >-
+    {{ sun_dark | bool
+       and (not lux_valid | bool or elevation < -6 or lux_dark | bool) }}
+  in_off_schedule: "{{ off_schedule not in ['', none] and is_state(off_schedule, 'on') }}"
+  timer_duration: "{{ '%02d:%02d:00' % ((timed_minutes | int) // 60, (timed_minutes | int) % 60) }}"
+
+actions:
+  # 1. Timed lighting: start (or restart) the timer.
+  - choose:
+      - alias: Timed lighting — only when dark
+        conditions: "{{ category == 'timed_dark' }}"
+        sequence:
+          - if: "{{ not is_dark | bool }}"
+            then:
+              - stop: Not dark — ignoring trigger.
+          - if: "{{ has_timer | bool }}"
+            then:
+              - action: timer.start
+                target:
+                  entity_id: "{{ timer_helper }}"
+                data:
+                  duration: "{{ timer_duration }}"
+            else:
+              - action: persistent_notification.create
+                data:
+                  notification_id: outdoor_lighting_missing_timer
+                  title: Outdoor lighting
+                  message: >-
+                    Timed lighting was triggered but no timer helper is selected
+                    in the automation. Select one under "Timed lighting".
+
+      - alias: Timed lighting — always
+        conditions: "{{ category == 'timed_always' }}"
+        sequence:
+          - if: "{{ has_timer | bool }}"
+            then:
+              - action: timer.start
+                target:
+                  entity_id: "{{ timer_helper }}"
+                data:
+                  duration: "{{ timer_duration }}"
+            else:
+              - action: persistent_notification.create
+                data:
+                  notification_id: outdoor_lighting_missing_timer
+                  title: Outdoor lighting
+                  message: >-
+                    Timed lighting was triggered but no timer helper is selected
+                    in the automation. Select one under "Timed lighting".
+
+  # 2. Random delay: if the lights-off schedule (or, when enabled, daybreak /
+  #    lux) would switch lit lamps off, keep them on for a random time first
+  #    (via the restart-safe timer).
+  - if: >-
+      {{ category == 'boundary'
+         and (trigger.id == 'schedule_boundary' or random_off_at_daybreak | bool)
+         and random_off_minutes | int > 0
+         and has_timer | bool
+         and states(timer_helper) not in ['active', 'paused']
+         and not (is_dark | bool and not in_off_schedule | bool) }}
+    then:
+      - variables:
+          any_light_on: >-
+            {%- set t = target_lights if target_lights is mapping else {} -%}
+            {%- set ns = namespace(e=[], direct=[]) -%}
+            {%- for key in ['entity_id', 'label_id', 'area_id', 'device_id', 'floor_id'] -%}
+              {%- set v = t.get(key, []) -%}
+              {%- for item in ([v] if v is string else v) -%}
+                {%- if key == 'entity_id' -%}{%- set ns.direct = ns.direct + [item] -%}
+                {%- elif key == 'label_id' -%}{%- set ns.e = ns.e + label_entities(item) -%}
+                {%- elif key == 'area_id' -%}{%- set ns.e = ns.e + area_entities(item) -%}
+                {%- elif key == 'device_id' -%}{%- set ns.e = ns.e + device_entities(item) -%}
+                {%- elif key == 'floor_id' -%}
+                  {%- for a in floor_areas(item) -%}{%- set ns.e = ns.e + area_entities(a) -%}{%- endfor -%}
+                {%- endif -%}
+              {%- endfor -%}
+            {%- endfor -%}
+            {%- set lit = ns.direct + (ns.e | select('match', '^(light|switch)\\.') | list) -%}
+            {{ lit | select('is_state', 'on') | list | count > 0 }}
+          random_seconds: "{{ range(0, (random_off_minutes | int) * 60 + 1) | random }}"
+      - if: "{{ any_light_on | bool and random_seconds | int > 0 }}"
+        then:
+          - action: timer.start
+            target:
+              entity_id: "{{ timer_helper }}"
+            data:
+              duration: >-
+                {%- set s = random_seconds | int -%}
+                {{ '%02d:%02d:%02d' % (s // 3600, (s % 3600) // 60, s % 60) }}
+
+  # 3. Apply the rule.
+  - variables:
+      timer_active: "{{ has_timer | bool and states(timer_helper) in ['active', 'paused'] }}"
+      fallback_on: "{{ category in ['timed_dark', 'timed_always'] and not has_timer | bool }}"
+      lights_on: >-
+        {{ (is_dark | bool and not in_off_schedule | bool)
+           or timer_active | bool or fallback_on | bool }}
+  - if: "{{ lights_on | bool }}"
+    then:
+      - action: homeassistant.turn_on
+        target: !input target_lights
+    else:
+      - action: homeassistant.turn_off
+        target: !input target_lights

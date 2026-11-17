@@ -1,0 +1,386 @@
+blueprint:
+  name: Engine heater auto-off (DEFA etc.)
+  description: >-
+    Turns an engine heater (DEFA, Calix or any heater on a smart plug) off
+    automatically, however it was turned on — app, button on the plug or Home
+    Assistant.
+
+
+    **How it works**
+
+    - When the plug turns on, it waits for a car: if no power draw within the
+    waiting time, the plug turns off.
+
+    - When the heater starts drawing power, it heats for the set time — scaled
+    by the outdoor temperature if you pick a temperature source (counted once
+    per session, so a heater thermostat that cycles doesn't extend it) — and
+    then turns off.
+
+    - If nothing draws power shortly after it was turned on, the person who
+    turned it on gets a phone notification ("is the cable plugged in?"). If it
+    was turned on outside Home Assistant, everyone with the companion app gets
+    it.
+
+
+    Restart-safe: uses a timer helper (with restore) and a toggle helper, and
+    checks the plug when Home Assistant starts.
+  domain: automation
+  author: athornblom
+  source_url: https://github.com/athornblom/ha-blueprints/blob/main/automation/engine_heater_auto_off.yaml
+  homeassistant:
+    min_version: "2026.5.0"
+  input:
+    devices_section:
+      name: Heater
+      icon: mdi:car-defrost-front
+      input:
+        heater_switch:
+          name: Heater plug
+          description: The smart plug (switch) the engine heater is connected to.
+          selector:
+            entity:
+              filter:
+                - domain: switch
+        power_sensor:
+          name: Power sensor
+          description: >-
+            The plug's power sensor (W). Used to see when the car is plugged in
+            and the heater actually draws power.
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                  device_class: power
+
+    timing_section:
+      name: Times
+      icon: mdi:timer-outline
+      input:
+        temperature_entity:
+          name: Outdoor temperature (optional)
+          description: >-
+            A temperature sensor or a weather entity. When set, the heating time
+            scales with the temperature between the mild and cold times below.
+            Without it (or if it is unavailable) the cold heating time is used.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                  device_class: temperature
+                - domain: weather
+        heat_minutes:
+          name: Heating time — cold
+          description: >-
+            Heating time at the cold limit or colder (and when no temperature is
+            available). Counted from when the heater starts drawing power.
+          default: 30
+          selector:
+            number:
+              min: 5
+              max: 180
+              step: 5
+              unit_of_measurement: min
+              mode: slider
+        cold_temperature:
+          name: Cold limit
+          default: -15
+          selector:
+            number:
+              min: -40
+              max: 10
+              step: 1
+              unit_of_measurement: "°C"
+              mode: slider
+        heat_minutes_mild:
+          name: Heating time — mild
+          description: >-
+            Heating time at the mild limit or warmer. Between the limits the time
+            is scaled gradually.
+          default: 15
+          selector:
+            number:
+              min: 5
+              max: 180
+              step: 5
+              unit_of_measurement: min
+              mode: slider
+        mild_temperature:
+          name: Mild limit
+          default: -1
+          selector:
+            number:
+              min: -30
+              max: 20
+              step: 1
+              unit_of_measurement: "°C"
+              mode: slider
+        wait_minutes:
+          name: Wait for a car
+          description: >-
+            If the plug is on but nothing draws power within this time, the plug
+            turns off.
+          default: 30
+          selector:
+            number:
+              min: 5
+              max: 180
+              step: 5
+              unit_of_measurement: min
+              mode: slider
+
+    notify_section:
+      name: Notification
+      icon: mdi:cellphone-message
+      input:
+        notify_no_power:
+          name: Notify when nothing draws power
+          description: >-
+            Send a phone notification to the person who turned it on (everyone
+            if it was turned on outside Home Assistant) when the plug is on but
+            nothing draws power.
+          default: true
+          selector:
+            boolean: {}
+        no_power_minutes:
+          name: Notify after
+          default: 1
+          selector:
+            number:
+              min: 1
+              max: 30
+              step: 1
+              unit_of_measurement: min
+              mode: slider
+        notify_message:
+          name: Notification text
+          description: The text of the notification, in your own language.
+          default: >-
+            The engine heater is on but isn't drawing power. Is the cable
+            plugged into the car? It turns off automatically if no car is
+            connected.
+          selector:
+            text:
+              multiline: true
+
+    helpers_section:
+      name: Helpers
+      icon: mdi:tools
+      collapsed: true
+      input:
+        timer_helper:
+          name: Timer helper
+          description: >-
+            A timer for this heater. Create it under Settings → Devices &
+            services → Helpers → Timer and enable "Restore". Its own duration
+            doesn't matter.
+          selector:
+            entity:
+              filter:
+                - domain: timer
+        heating_helper:
+          name: "\"Heating\" helper"
+          description: >-
+            A toggle helper for this heater. It remembers that heating has
+            started in the current session, so the heating time is only counted
+            once. Create it under Helpers → Toggle.
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
+        power_threshold:
+          name: Power draw above
+          description: The heater counts as drawing power above this level.
+          default: 50
+          selector:
+            number:
+              min: 5
+              max: 500
+              step: 5
+              unit_of_measurement: W
+              mode: box
+
+mode: queued
+max: 10
+max_exceeded: silent
+
+triggers:
+  - trigger: state
+    entity_id: !input heater_switch
+    to: "on"
+    id: turned_on
+  - trigger: state
+    entity_id: !input heater_switch
+    from: "off"
+    to: "on"
+    for:
+      minutes: !input no_power_minutes
+    id: no_power_check
+  - trigger: numeric_state
+    entity_id: !input power_sensor
+    above: !input power_threshold
+    for: "00:00:05"
+    id: power_detected
+  - trigger: timer.finished
+    target:
+      entity_id: !input timer_helper
+    id: timer_finished
+  - trigger: state
+    entity_id: !input heater_switch
+    to: "off"
+    id: turned_off
+  - trigger: homeassistant
+    event: start
+    id: startup
+
+variables:
+  heater_switch: !input heater_switch
+  power_sensor: !input power_sensor
+  timer_helper: !input timer_helper
+  heating_helper: !input heating_helper
+  temperature_entity: !input temperature_entity
+  heat_minutes: !input heat_minutes
+  heat_minutes_mild: !input heat_minutes_mild
+  cold_temperature: !input cold_temperature
+  mild_temperature: !input mild_temperature
+  wait_minutes: !input wait_minutes
+  power_threshold: !input power_threshold
+  notify_no_power: !input notify_no_power
+  wait_duration: "{{ '%02d:%02d:00' % ((wait_minutes | int) // 60, (wait_minutes | int) % 60) }}"
+
+actions:
+  - choose:
+      - alias: Turned on — start waiting for a car
+        conditions:
+          - condition: trigger
+            id: turned_on
+          - condition: state
+            entity_id: !input timer_helper
+            state: idle
+        sequence:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: !input heating_helper
+          - action: timer.start
+            target:
+              entity_id: !input timer_helper
+            data:
+              duration: "{{ wait_duration }}"
+
+      - alias: Power detected — heat for the set time (once per session)
+        conditions:
+          - condition: trigger
+            id: power_detected
+          - condition: state
+            entity_id: !input heater_switch
+            state: "on"
+          - condition: state
+            entity_id: !input heating_helper
+            state: "off"
+        sequence:
+          - variables:
+              # Outdoor temperature right now (sensor state or weather attribute).
+              outdoor_temperature: >-
+                {%- if temperature_entity in ['', none] -%}none
+                {%- elif temperature_entity.startswith('weather.') -%}
+                  {{ state_attr(temperature_entity, 'temperature') | float('none') }}
+                {%- else -%}{{ states(temperature_entity) | float('none') }}{%- endif -%}
+              # Cold time at/below the cold limit, mild time at/above the mild
+              # limit, scaled linearly in between. No temperature → cold time.
+              heat_minutes_now: >-
+                {%- set cold_t = cold_temperature | float -%}
+                {%- set mild_t = mild_temperature | float -%}
+                {%- set cold_m = heat_minutes | float -%}
+                {%- set mild_m = heat_minutes_mild | float -%}
+                {%- if outdoor_temperature in ['none', none] or mild_t <= cold_t -%}{{ cold_m | int }}
+                {%- else -%}
+                  {%- set t = [[outdoor_temperature | float, cold_t] | max, mild_t] | min -%}
+                  {{ (cold_m + (mild_m - cold_m) * (t - cold_t) / (mild_t - cold_t)) | round(0) | int }}
+                {%- endif -%}
+              heat_duration: "{{ '%02d:%02d:00' % ((heat_minutes_now | int) // 60, (heat_minutes_now | int) % 60) }}"
+          - action: input_boolean.turn_on
+            target:
+              entity_id: !input heating_helper
+          - action: timer.start
+            target:
+              entity_id: !input timer_helper
+            data:
+              duration: "{{ heat_duration }}"
+
+      - alias: No power draw — notify the person who turned it on
+        conditions:
+          - condition: trigger
+            id: no_power_check
+          - "{{ notify_no_power | bool }}"
+          - condition: state
+            entity_id: !input heating_helper
+            state: "off"
+          - condition: numeric_state
+            entity_id: !input power_sensor
+            below: !input power_threshold
+        sequence:
+          - variables:
+              started_by: "{{ trigger.to_state.context.user_id }}"
+              heater_name: "{{ state_attr(heater_switch, 'friendly_name') or heater_switch }}"
+              # Person who turned it on → their device trackers → matching
+              # companion-app notify entities. Everyone if unknown.
+              notify_targets: >-
+                {%- set all_notify = states.notify | map(attribute='entity_id') | list -%}
+                {%- set ns = namespace(t=[]) -%}
+                {%- for person in states.person | selectattr('attributes.user_id', 'eq', started_by) -%}
+                  {%- for dt in person.attributes.device_trackers | default([]) -%}
+                    {%- set n = 'notify.' ~ dt.split('.')[1] -%}
+                    {%- if n in all_notify -%}{%- set ns.t = ns.t + [n] -%}{%- endif -%}
+                  {%- endfor -%}
+                {%- endfor -%}
+                {{ ns.t if ns.t | count > 0 else all_notify }}
+          - if: "{{ notify_targets | count > 0 }}"
+            then:
+              - action: notify.send_message
+                target:
+                  entity_id: "{{ notify_targets }}"
+                data:
+                  title: "{{ heater_name }}"
+                  message: !input notify_message
+
+      - alias: Time is up — turn off
+        conditions:
+          - condition: trigger
+            id: timer_finished
+        sequence:
+          - action: switch.turn_off
+            target:
+              entity_id: !input heater_switch
+          - action: input_boolean.turn_off
+            target:
+              entity_id: !input heating_helper
+
+      - alias: Turned off — reset
+        conditions:
+          - condition: trigger
+            id: turned_off
+        sequence:
+          - action: timer.cancel
+            target:
+              entity_id: !input timer_helper
+          - action: input_boolean.turn_off
+            target:
+              entity_id: !input heating_helper
+
+      - alias: Home Assistant started — turn off if on without a running timer
+        conditions:
+          - condition: trigger
+            id: startup
+          - condition: state
+            entity_id: !input heater_switch
+            state: "on"
+          - condition: state
+            entity_id: !input timer_helper
+            state: idle
+        sequence:
+          - action: switch.turn_off
+            target:
+              entity_id: !input heater_switch
+          - action: input_boolean.turn_off
+            target:
+              entity_id: !input heating_helper

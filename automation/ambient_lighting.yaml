@@ -1,0 +1,317 @@
+blueprint:
+  name: Ambient lighting (sun, awake schedule & buttons)
+  description: >-
+    Indoor ambient/window lights that follow the sun inside the hours you are
+    awake — but stay under your control: the automation only acts at the moments
+    something changes (sunset, daybreak, schedule start/end, a button), so if you
+    turn the lights off or on by hand they stay that way until the next change.
+
+
+    **Minimum setup:** pick the lights. They turn on when the sun sets below the
+    evening elevation and off when it rises above the morning elevation.
+
+
+    **Optional:** an awake schedule (lights only turn on automatically while it
+    is on, and turn off when it ends — with a random delay at night), morning
+    turn-on when the schedule starts in the dark (turn it off for bedrooms), and
+    on/off buttons.
+
+
+    Use one automation per group of lights, e.g. common areas and bedrooms with
+    different settings.
+  domain: automation
+  author: athornblom
+  source_url: https://github.com/athornblom/ha-blueprints/blob/main/automation/ambient_lighting.yaml
+  homeassistant:
+    min_version: "2025.1.0"
+  input:
+    lights_section:
+      name: Lights
+      icon: mdi:lamp
+      input:
+        target_lights:
+          name: Lights
+          description: >-
+            The lights (or switches) to control. Tip: use a label so you can add
+            lamps later without editing the automation.
+          selector:
+            target:
+              entity:
+                - domain: light
+                - domain: switch
+
+    sun_section:
+      name: Sun
+      icon: mdi:weather-sunset
+      input:
+        evening_elevation:
+          name: Evening sun elevation
+          description: >-
+            Turn on in the evening when the sun sets below this elevation.
+            −0.8° is sunset; +1° is roughly 15–20 minutes before sunset in
+            Sweden. Higher = earlier.
+          default: 1.0
+          selector:
+            number:
+              min: -6
+              max: 10
+              step: 0.1
+              unit_of_measurement: "°"
+              mode: slider
+        morning_elevation:
+          name: Morning sun elevation
+          description: >-
+            Turn off in the morning when the sun rises above this elevation.
+            −0.8° is sunrise; −2.3° is roughly 15 minutes before sunrise in
+            Sweden. Lower = earlier.
+          default: -2.3
+          selector:
+            number:
+              min: -12
+              max: 10
+              step: 0.1
+              unit_of_measurement: "°"
+              mode: slider
+
+    schedule_section:
+      name: Awake schedule (optional)
+      icon: mdi:calendar-clock
+      input:
+        awake_schedule:
+          name: Awake schedule
+          description: >-
+            Optional schedule helper that is ON during the hours you are awake.
+            Lights only turn on automatically while it is on, and turn off when
+            it ends. Without it, only the sun is used.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: schedule
+        morning_on:
+          name: Turn on in the morning
+          description: >-
+            Turn the lights on when the awake schedule starts while it is still
+            dark. Turn this off for bedrooms.
+          default: true
+          selector:
+            boolean: {}
+        random_off_minutes:
+          name: Random delay before turning off at night
+          description: >-
+            When the awake schedule ends, wait a random 0 to this many minutes
+            before turning off — a different time every night, so the house
+            looks lived in. Skipped if the lights are already off; an off button
+            cancels it. 0 = off. Needs the timer helper below.
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 120
+              step: 1
+              unit_of_measurement: min
+              mode: slider
+        timer_helper:
+          name: Timer helper
+          description: >-
+            Needed for the random delay. Create it under Settings → Devices &
+            services → Helpers → Timer and enable "Restore" so it survives
+            restarts. Its own duration doesn't matter. Use one timer per
+            automation.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: timer
+
+    buttons_section:
+      name: Buttons (optional)
+      icon: mdi:gesture-tap-button
+      collapsed: true
+      input:
+        on_triggers:
+          name: Turn on
+          description: Triggers that turn the lights on, at any time.
+          default: []
+          selector:
+            trigger: {}
+        off_triggers:
+          name: Turn off
+          description: >-
+            Triggers that turn the lights off, at any time (also cancels a
+            running random delay).
+          default: []
+          selector:
+            trigger: {}
+
+mode: queued
+max: 25
+max_exceeded: silent
+
+trigger_variables:
+  awake_schedule: !input awake_schedule
+
+triggers:
+  # User triggers first. A trigger group can't carry an id, so the
+  # category is worked out from the trigger's position (see `category`).
+  - triggers: !input on_triggers
+  - triggers: !input off_triggers
+
+  # Sun crossings. Only the evening threshold while setting and the morning
+  # threshold while rising count (see `category`).
+  - trigger: numeric_state
+    entity_id: sun.sun
+    attribute: elevation
+    below: !input evening_elevation
+    id: sun_evening
+  - trigger: numeric_state
+    entity_id: sun.sun
+    attribute: elevation
+    above: !input morning_elevation
+    id: sun_morning
+
+  # Awake schedule (short "for" ignores a blip between adjacent blocks).
+  - trigger: template
+    value_template: "{{ awake_schedule not in ['', none] and is_state(awake_schedule, 'on') }}"
+    for: "00:00:05"
+    id: schedule_start
+  - trigger: template
+    value_template: "{{ awake_schedule not in ['', none] and is_state(awake_schedule, 'off') }}"
+    for: "00:00:05"
+    id: schedule_end
+
+  # Random delay finished.
+  - trigger: event
+    event_type: timer.finished
+    event_data:
+      entity_id: !input timer_helper
+    id: timer_finished
+
+  - trigger: homeassistant
+    event: start
+    id: startup
+
+variables:
+  target_lights: !input target_lights
+  evening_elevation: !input evening_elevation
+  morning_elevation: !input morning_elevation
+  morning_on: !input morning_on
+  random_off_minutes: !input random_off_minutes
+  timer_helper: !input timer_helper
+
+  on_trigger_list: !input on_triggers
+  off_trigger_list: !input off_triggers
+  category: >-
+    {%- set n_on = on_trigger_list | count -%}
+    {%- set n_off = off_trigger_list | count -%}
+    {%- set tid = trigger.id | string if trigger is defined and trigger.id is defined else 'none' -%}
+    {%- set i = trigger.idx | int(-1) if trigger is defined and trigger.idx is defined else -1 -%}
+    {%- set is_rising = state_attr('sun.sun', 'rising') | bool(false) -%}
+    {%- if tid in ['schedule_start', 'schedule_end', 'timer_finished', 'startup'] -%}{{ tid }}
+    {%- elif tid == 'sun_evening' -%}{{ 'none' if is_rising else 'sun_evening' }}
+    {%- elif tid == 'sun_morning' -%}{{ 'sun_morning' if is_rising else 'none' }}
+    {%- elif 0 <= i < n_on -%}button_on
+    {%- elif n_on <= i < n_on + n_off -%}button_off
+    {%- else -%}none{%- endif -%}
+  has_timer: "{{ timer_helper not in ['', none] }}"
+  timer_running: "{{ has_timer | bool and states(timer_helper) in ['active', 'paused'] }}"
+  awake: "{{ awake_schedule in ['', none] or is_state(awake_schedule, 'on') }}"
+  elevation: "{{ state_attr('sun.sun', 'elevation') | float(0) }}"
+  rising: "{{ state_attr('sun.sun', 'rising') | bool(false) }}"
+  is_dark: "{{ elevation < (morning_elevation if rising else evening_elevation) | float }}"
+  any_light_on: >-
+    {%- set t = target_lights if target_lights is mapping else {} -%}
+    {%- set ns = namespace(e=[], direct=[]) -%}
+    {%- for key in ['entity_id', 'label_id', 'area_id', 'device_id', 'floor_id'] -%}
+      {%- set v = t.get(key, []) -%}
+      {%- for item in ([v] if v is string else v) -%}
+        {%- if key == 'entity_id' -%}{%- set ns.direct = ns.direct + [item] -%}
+        {%- elif key == 'label_id' -%}{%- set ns.e = ns.e + label_entities(item) -%}
+        {%- elif key == 'area_id' -%}{%- set ns.e = ns.e + area_entities(item) -%}
+        {%- elif key == 'device_id' -%}{%- set ns.e = ns.e + device_entities(item) -%}
+        {%- elif key == 'floor_id' -%}
+          {%- for a in floor_areas(item) -%}{%- set ns.e = ns.e + area_entities(a) -%}{%- endfor -%}
+        {%- endif -%}
+      {%- endfor -%}
+    {%- endfor -%}
+    {%- set lit = ns.direct + (ns.e | select('match', '^(light|switch)\\.') | list) -%}
+    {{ lit | select('is_state', 'on') | list | count > 0 }}
+
+actions:
+  - choose:
+      - alias: Button — on (cancels a running random delay)
+        conditions: "{{ category == 'button_on' }}"
+        sequence:
+          - if: "{{ timer_running | bool }}"
+            then:
+              - action: timer.cancel
+                target:
+                  entity_id: "{{ timer_helper }}"
+          - action: homeassistant.turn_on
+            target: !input target_lights
+
+      - alias: Button — off (cancels a running random delay)
+        conditions: "{{ category == 'button_off' }}"
+        sequence:
+          - if: "{{ timer_running | bool }}"
+            then:
+              - action: timer.cancel
+                target:
+                  entity_id: "{{ timer_helper }}"
+          - action: homeassistant.turn_off
+            target: !input target_lights
+
+      - alias: Sunset — on if awake
+        conditions: "{{ category == 'sun_evening' and awake | bool }}"
+        sequence:
+          - action: homeassistant.turn_on
+            target: !input target_lights
+
+      - alias: Daybreak — off
+        conditions: "{{ category == 'sun_morning' }}"
+        sequence:
+          - action: homeassistant.turn_off
+            target: !input target_lights
+
+      - alias: Awake schedule starts — on if dark (morning turn-on)
+        conditions: "{{ category == 'schedule_start' and morning_on | bool and is_dark | bool }}"
+        sequence:
+          - action: homeassistant.turn_on
+            target: !input target_lights
+
+      - alias: Awake schedule ends — off, after a random delay if lights are on
+        conditions: "{{ category == 'schedule_end' }}"
+        sequence:
+          - variables:
+              random_seconds: "{{ range(0, (random_off_minutes | int) * 60 + 1) | random }}"
+          - if: >-
+              {{ any_light_on | bool and has_timer | bool
+                 and random_off_minutes | int > 0 and random_seconds | int > 0
+                 and not timer_running | bool }}
+            then:
+              - action: timer.start
+                target:
+                  entity_id: "{{ timer_helper }}"
+                data:
+                  duration: >-
+                    {%- set s = random_seconds | int -%}
+                    {{ '%02d:%02d:%02d' % (s // 3600, (s % 3600) // 60, s % 60) }}
+            else:
+              - if: "{{ not timer_running | bool }}"
+                then:
+                  - action: homeassistant.turn_off
+                    target: !input target_lights
+
+      - alias: Random delay finished — off (unless the awake schedule started again)
+        conditions: "{{ category == 'timer_finished' and not awake | bool }}"
+        sequence:
+          - action: homeassistant.turn_off
+            target: !input target_lights
+
+      - alias: Home Assistant started — off if it is night and no delay is running
+        conditions: >-
+          {{ category == 'startup' and not awake | bool
+             and not timer_running | bool and any_light_on | bool }}
+        sequence:
+          - action: homeassistant.turn_off
+            target: !input target_lights

@@ -65,3 +65,53 @@ regulation.
 **Note:** nothing is written while the thermostat is switched off; the offset catches up when it's turned back on.
 
 **Requires:** Home Assistant 2024.10.0+.
+
+### `automation/outdoor_lighting.yaml` — Outdoor lighting (sun, lux, schedule & triggers)
+
+Keeps outdoor lights on whenever it is dark, re-checking one rule on every
+change: `on = (dark AND NOT in lights-off schedule) OR timed lighting running`.
+Restart-safe (no delays; durations live in a timer helper).
+
+**Inputs:**
+- `target_lights` (required) — lights/switches, e.g. by label
+- `evening_elevation` (default `-0.8`°) / `morning_elevation` (default `-3.0`°) — sun window
+- `lux_sensor`, `lux_on_level` (default `20` lx) — optional, confirms darkness inside the sun window
+- `off_schedule` — optional schedule helper; lights stay off while it's on
+- `random_off_minutes` (default `0`), `random_off_at_daybreak` (default `false`) — random delay before turning off
+- `dark_triggers` / `always_triggers`, `timed_minutes` (default `15`) — timed lighting from cameras/buttons
+- `timer_helper` — needed for timed lighting and the random delay (enable "Restore")
+
+**Requires:** Home Assistant 2025.1.0+.
+
+### `automation/ambient_lighting.yaml` — Ambient lighting (sun, awake schedule & buttons)
+
+Indoor ambient/window lights that follow the sun inside the hours you're
+awake. Edge-driven: it only acts when something changes (sunset, daybreak,
+schedule start/end, a button), so manual changes stay until the next change.
+
+**Inputs:**
+- `target_lights` (required) — lights/switches, e.g. by label
+- `evening_elevation` (default `+1.0`°) / `morning_elevation` (default `-2.3`°)
+- `awake_schedule` — optional schedule helper; on at sunset only while it's on, off when it ends
+- `morning_on` (default `true`) — turn on when the schedule starts in the dark (off for bedrooms)
+- `random_off_minutes` (default `0`) — random delay when the schedule ends
+- `timer_helper` — needed for the random delay (enable "Restore"; one per automation)
+- `on_triggers` / `off_triggers` — buttons; both cancel a running delay
+
+**Requires:** Home Assistant 2025.1.0+.
+
+### `automation/engine_heater_auto_off.yaml` — Engine heater auto-off (DEFA etc.)
+
+Turns an engine heater on a smart plug off automatically, however it was
+turned on. Waits for a car, heats for a temperature-scaled time once power
+is drawn, and notifies the person who turned it on if nothing draws power.
+
+**Inputs:**
+- `heater_switch`, `power_sensor` (required) — the plug and its power sensor
+- `temperature_entity` — optional sensor or weather entity for scaling
+- `heat_minutes` (default `30`) at `cold_temperature` (default `-15` °C), `heat_minutes_mild` (default `15`) at `mild_temperature` (default `-1` °C) — linear in between
+- `wait_minutes` (default `30`) — turn off if no car draws power
+- `notify_no_power` (default `true`), `no_power_minutes` (default `1`), `notify_message`
+- `timer_helper` (restore on), `heating_helper` (toggle), `power_threshold` (default `50` W)
+
+**Requires:** Home Assistant 2026.5.0+ (uses the `timer.finished` purpose-specific trigger).
