@@ -74,7 +74,7 @@ Restart-safe (no delays; durations live in a timer helper).
 
 **Inputs:**
 - `target_lights` (required) — lights/switches, e.g. by label
-- `evening_elevation` (default `-0.8`°) / `morning_elevation` (default `-3.0`°) — sun window
+- `evening_elevation` (default `-0.8`°) / `morning_elevation` (default `-0.8`°) — sun window
 - `lux_sensor`, `lux_on_level` (default `20` lx) — optional, confirms darkness inside the sun window
 - `off_schedule` — optional schedule helper; lights stay off while it's on
 - `random_off_minutes` (default `0`), `random_off_at_daybreak` (default `false`) — random delay before turning off
@@ -91,7 +91,7 @@ schedule start/end, a button), so manual changes stay until the next change.
 
 **Inputs:**
 - `target_lights` (required) — lights/switches, e.g. by label
-- `evening_elevation` (default `+1.0`°) / `morning_elevation` (default `-2.3`°)
+- `evening_elevation` (default `+3.0`°) / `morning_elevation` (default `+3.0`°)
 - `awake_schedule` — optional schedule helper; on at sunset only while it's on, off when it ends
 - `morning_on` (default `true`) — turn on when the schedule starts in the dark (off for bedrooms)
 - `random_off_minutes` (default `0`) — random delay when the schedule ends
@@ -100,7 +100,7 @@ schedule start/end, a button), so manual changes stay until the next change.
 
 **Requires:** Home Assistant 2025.1.0+.
 
-### `automation/engine_heater_auto_off.yaml` — Engine heater auto-off (DEFA etc.)
+### `automation/engine_heater_auto.yaml` — Engine heater auto-off (DEFA etc.)
 
 Turns an engine heater on a smart plug off automatically, however it was
 turned on. Waits for a car, heats for a temperature-scaled time once power

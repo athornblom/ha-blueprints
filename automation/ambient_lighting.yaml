@@ -50,7 +50,7 @@ blueprint:
             Turn on in the evening when the sun sets below this elevation.
             −0.8° is sunset; +1° is roughly 15–20 minutes before sunset in
             Sweden. Higher = earlier.
-          default: 1.0
+          default: 3.0
           selector:
             number:
               min: -6
@@ -64,7 +64,7 @@ blueprint:
             Turn off in the morning when the sun rises above this elevation.
             −0.8° is sunrise; −2.3° is roughly 15 minutes before sunrise in
             Sweden. Lower = earlier.
-          default: -2.3
+          default: 3.0
           selector:
             number:
               min: -12

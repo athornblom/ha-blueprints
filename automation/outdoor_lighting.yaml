@@ -61,7 +61,7 @@ blueprint:
             In the morning it counts as light again when the sun rises above
             this elevation. −3° is roughly 20 minutes before sunrise in southern
             Sweden. Lower = earlier.
-          default: -3.0
+          default: -0.8
           selector:
             number:
               min: -12
