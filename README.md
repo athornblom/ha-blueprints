@@ -105,6 +105,8 @@ schedule start/end, a button), so manual changes stay until the next change.
 Turns an engine heater on a smart plug off automatically, however it was
 turned on. Waits for a car, heats for a temperature-scaled time once power
 is drawn, and notifies the person who turned it on if nothing draws power.
+Optionally checks in the evening, when frost is forecast, that the car is
+plugged in (switches the plug on for a few seconds and looks for power draw).
 
 **Inputs:**
 - `heater_switch`, `power_sensor` (required) — the plug and its power sensor
@@ -112,6 +114,9 @@ is drawn, and notifies the person who turned it on if nothing draws power.
 - `heat_minutes` (default `30`) at `cold_temperature` (default `-15` °C), `heat_minutes_mild` (default `15`) at `mild_temperature` (default `-1` °C) — linear in between
 - `wait_minutes` (default `30`) — turn off if no car draws power
 - `notify_no_power` (default `true`), `no_power_minutes` (default `1`), `notify_message`
+- `check_enabled` (default `false`), `check_time` (default `21:00`), `check_days` (default Sun–Thu) — evening plug-in check
+- `weather_entity` (strongly recommended; without it the check runs every chosen evening), `departure_time` (default `07:00`), `frost_temperature` (default `1` °C) — only check if the forecast low before departure is at or below this
+- `check_people` (default everyone with the app), `check_message`
 - `timer_helper` (restore on), `heating_helper` (toggle), `power_threshold` (default `50` W)
 
 **Requires:** Home Assistant 2026.5.0+ (uses the `timer.finished` purpose-specific trigger).

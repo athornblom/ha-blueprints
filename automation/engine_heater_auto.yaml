@@ -21,6 +21,11 @@ blueprint:
     was turned on outside Home Assistant, everyone with the companion app gets
     it.
 
+    - Optional evening check: on the evenings you pick, if the forecast shows
+    frost before your departure time, the plug is switched on for a few seconds
+    to see if the car is plugged in. If nothing draws power, the people you
+    pick get a notification.
+
 
     Restart-safe: uses a timer helper (with restore) and a toggle helper, and
     checks the plug when Home Assistant starts.
@@ -84,6 +89,7 @@ blueprint:
               mode: slider
         cold_temperature:
           name: Cold limit
+          description: At or below this outdoor temperature the cold heating time is used.
           default: -15
           selector:
             number:
@@ -107,6 +113,7 @@ blueprint:
               mode: slider
         mild_temperature:
           name: Mild limit
+          description: At or above this outdoor temperature the mild heating time is used.
           default: -1
           selector:
             number:
@@ -144,6 +151,7 @@ blueprint:
             boolean: {}
         no_power_minutes:
           name: Notify after
+          description: How long the plug has to be on without power draw before the notification.
           default: 1
           selector:
             number:
@@ -159,6 +167,97 @@ blueprint:
             The engine heater is on but isn't drawing power. Is the cable
             plugged into the car? It turns off automatically if no car is
             connected.
+          selector:
+            text:
+              multiline: true
+
+    evening_check_section:
+      name: Evening plug-in check
+      icon: mdi:snowflake-alert
+      input:
+        check_enabled:
+          name: Check in the evening that the car is plugged in
+          description: >-
+            Switches the plug on for up to 45 seconds to see if the heater draws
+            power, then off again.
+          default: false
+          selector:
+            boolean: {}
+        check_time:
+          name: Check time
+          description: When the evening check runs.
+          default: "21:00:00"
+          selector:
+            time: {}
+        check_days:
+          name: Evenings to check
+          description: >-
+            The evenings before the days you drive, e.g. Sunday–Thursday for
+            working days.
+          default: [sun, mon, tue, wed, thu]
+          selector:
+            select:
+              multiple: true
+              options:
+                - label: Monday
+                  value: mon
+                - label: Tuesday
+                  value: tue
+                - label: Wednesday
+                  value: wed
+                - label: Thursday
+                  value: thu
+                - label: Friday
+                  value: fri
+                - label: Saturday
+                  value: sat
+                - label: Sunday
+                  value: sun
+        weather_entity:
+          name: Weather forecast (strongly recommended)
+          description: >-
+            A weather entity with an hourly forecast, so the check only runs
+            when frost is expected. **Without it the check runs every chosen
+            evening**, whatever the weather (also if the forecast can't be read).
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: weather
+        departure_time:
+          name: Departure time
+          description: Frost is looked for in the forecast from the check until this time.
+          default: "07:00:00"
+          selector:
+            time: {}
+        frost_temperature:
+          name: Frost risk at or below
+          description: Windshields can frost a little above 0 °C on clear nights.
+          default: 1
+          selector:
+            number:
+              min: -10
+              max: 10
+              step: 0.5
+              unit_of_measurement: "°C"
+              mode: slider
+        check_people:
+          name: Notify
+          description: >-
+            People to notify (on their companion apps) when the car isn't
+            plugged in. Nobody picked → everyone with the companion app.
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain: person
+        check_message:
+          name: Notification text
+          description: Sent when the evening check finds no power draw.
+          default: >-
+            Frost is expected tonight but the car doesn't seem to be plugged
+            into the engine heater.
           selector:
             text:
               multiline: true
@@ -232,6 +331,10 @@ triggers:
   - trigger: homeassistant
     event: start
     id: startup
+  - trigger: time
+    at: !input check_time
+    id: plug_check
+    enabled: !input check_enabled
 
 variables:
   heater_switch: !input heater_switch
@@ -246,6 +349,10 @@ variables:
   wait_minutes: !input wait_minutes
   power_threshold: !input power_threshold
   notify_no_power: !input notify_no_power
+  weather_entity: !input weather_entity
+  departure_time: !input departure_time
+  frost_temperature: !input frost_temperature
+  check_people: !input check_people
   wait_duration: "{{ '%02d:%02d:00' % ((wait_minutes | int) // 60, (wait_minutes | int) % 60) }}"
 
 actions:
@@ -254,6 +361,10 @@ actions:
         conditions:
           - condition: trigger
             id: turned_on
+          # Skips a queued run once the plug is off again (the evening probe).
+          - condition: state
+            entity_id: !input heater_switch
+            state: "on"
           - condition: state
             entity_id: !input timer_helper
             state: idle
@@ -366,6 +477,77 @@ actions:
           - action: input_boolean.turn_off
             target:
               entity_id: !input heating_helper
+
+      - alias: Evening check — is the car plugged in?
+        conditions:
+          - condition: trigger
+            id: plug_check
+          - condition: time
+            weekday: !input check_days
+          - condition: state
+            entity_id: !input heater_switch
+            state: "off"
+        sequence:
+          - if: "{{ weather_entity not in ['', none] }}"
+            then:
+              - action: weather.get_forecasts
+                target:
+                  entity_id: "{{ weather_entity }}"
+                data:
+                  type: hourly
+                response_variable: forecast
+                continue_on_error: true
+              - variables:
+                  # Lowest forecast temperature until the next departure time.
+                  forecast_low: >-
+                    {%- set ns = namespace(low=none) -%}
+                    {%- if forecast is defined -%}
+                      {%- set dep = today_at(departure_time) -%}
+                      {%- if dep <= now() -%}{%- set dep = dep + timedelta(days=1) -%}{%- endif -%}
+                      {%- for f in forecast[weather_entity].forecast | default([]) -%}
+                        {%- if f.temperature is number and as_datetime(f.datetime) <= dep -%}
+                          {%- set ns.low = f.temperature if ns.low is none else [ns.low, f.temperature] | min -%}
+                        {%- endif -%}
+                      {%- endfor -%}
+                    {%- endif -%}
+                    {{ ns.low }}
+              - if: "{{ forecast_low is number and forecast_low > frost_temperature | float }}"
+                then:
+                  - stop: No frost in the forecast
+          # The probe is shorter than "Notify after" (min 1 min), so the
+          # general no-power notification never fires for it.
+          - action: switch.turn_on
+            target:
+              entity_id: !input heater_switch
+          - wait_template: "{{ states(power_sensor) | float(0) > power_threshold | float }}"
+            timeout: "00:00:45"
+          - variables:
+              plugged_in: "{{ wait.completed }}"
+          - action: switch.turn_off
+            target:
+              entity_id: !input heater_switch
+          - if: "{{ not plugged_in }}"
+            then:
+              - variables:
+                  heater_name: "{{ state_attr(heater_switch, 'friendly_name') or heater_switch }}"
+                  notify_targets: >-
+                    {%- set all_notify = states.notify | map(attribute='entity_id') | list -%}
+                    {%- set ns = namespace(t=[]) -%}
+                    {%- for person in check_people -%}
+                      {%- for dt in state_attr(person, 'device_trackers') or [] -%}
+                        {%- set n = 'notify.' ~ dt.split('.')[1] -%}
+                        {%- if n in all_notify -%}{%- set ns.t = ns.t + [n] -%}{%- endif -%}
+                      {%- endfor -%}
+                    {%- endfor -%}
+                    {{ ns.t if check_people | count > 0 else all_notify }}
+              - if: "{{ notify_targets | count > 0 }}"
+                then:
+                  - action: notify.send_message
+                    target:
+                      entity_id: "{{ notify_targets }}"
+                    data:
+                      title: "{{ heater_name }}"
+                      message: !input check_message
 
       - alias: Home Assistant started — turn off if on without a running timer
         conditions:
