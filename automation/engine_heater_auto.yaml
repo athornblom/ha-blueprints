@@ -440,11 +440,11 @@ actions:
               started_by: "{{ trigger.to_state.context.user_id }}"
               heater_name: "{{ state_attr(heater_switch, 'friendly_name') or heater_switch }}"
               # Person who turned it on → their device trackers → matching
-              # companion-app notify entities. Everyone if unknown.
+              # companion-app notify entities. Everyone with the app if unknown.
               notify_targets: >-
-                {%- set all_notify = states.notify | map(attribute='entity_id') | list -%}
+                {%- set all_notify = integration_entities('mobile_app') | select('match', 'notify\\.') | list -%}
                 {%- set ns = namespace(t=[]) -%}
-                {%- for person in states.person | selectattr('attributes.user_id', 'eq', started_by) -%}
+                {%- for person in ((states.person | selectattr('attributes.user_id', 'eq', started_by) | list) if started_by else []) -%}
                   {%- for dt in person.attributes.device_trackers | default([]) -%}
                     {%- set n = 'notify.' ~ dt.split('.')[1] -%}
                     {%- if n in all_notify -%}{%- set ns.t = ns.t + [n] -%}{%- endif -%}
@@ -468,6 +468,7 @@ actions:
           - action: switch.turn_off
             target:
               entity_id: !input heater_switch
+            continue_on_error: true
           - action: input_boolean.turn_off
             target:
               entity_id: !input heating_helper
@@ -537,7 +538,7 @@ actions:
               - variables:
                   heater_name: "{{ state_attr(heater_switch, 'friendly_name') or heater_switch }}"
                   notify_targets: >-
-                    {%- set all_notify = states.notify | map(attribute='entity_id') | list -%}
+                    {%- set all_notify = integration_entities('mobile_app') | select('match', 'notify\\.') | list -%}
                     {%- set ns = namespace(t=[]) -%}
                     {%- for person in check_people -%}
                       {%- for dt in state_attr(person, 'device_trackers') or [] -%}
