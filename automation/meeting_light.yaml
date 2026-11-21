@@ -76,6 +76,9 @@ variables:
   # instances never overwrite each other's saved state.
   scene_id: "meeting_light_{{ this.entity_id.split('.')[1] }}"
   scene_entity: "scene.{{ scene_id }}"
+  # Second snapshot, taken after switching on lights that were off: their own color.
+  color_scene_id: "{{ scene_id }}_color"
+  color_scene_entity: "scene.{{ color_scene_id }}"
   in_meeting: "{{ meeting_entities | select('is_state', 'on') | list | count > 0 }}"
   # The snapshot scene doubles as the "light is currently in meeting mode"
   # flag: it exists only between turning red and restoring.
@@ -93,13 +96,31 @@ triggers:
 actions:
   - choose:
       # Meeting started and the light isn't red yet: snapshot, then go red.
+      # A light that is off reports no color, and would otherwise remember
+      # red after the meeting. So switch it on first (it comes back in its
+      # own color) and snapshot that too.
       - conditions:
           - condition: template
             value_template: "{{ in_meeting and not has_snapshot }}"
         sequence:
+          - variables:
+              lights_off: "{{ lights | select('is_state', 'off') | list }}"
           - action: scene.create
             data:
               scene_id: "{{ scene_id }}"
+              snapshot_entities: "{{ lights }}"
+          - if: "{{ lights_off | count > 0 }}"
+            then:
+              - action: light.turn_on
+                target:
+                  entity_id: "{{ lights_off }}"
+              - wait_template: "{{ lights_off | select('is_state', 'on') | list | count == lights_off | count }}"
+                timeout: "00:00:05"
+              # Give the lights a moment to report their color.
+              - delay: "00:00:01"
+          - action: scene.create
+            data:
+              scene_id: "{{ color_scene_id }}"
               snapshot_entities: "{{ lights }}"
           - action: light.turn_on
             target:
@@ -108,14 +129,22 @@ actions:
               rgb_color: !input meeting_color
               brightness_pct: !input meeting_brightness
 
-      # All meetings over and we have a snapshot: restore, then drop it.
+      # All meetings over and we have a snapshot: put the lights' own color
+      # back (lights that were off flash on in it briefly), then restore
+      # on/off, then drop both snapshots.
       - conditions:
           - condition: template
             value_template: "{{ not in_meeting and has_snapshot }}"
         sequence:
+          - if: "{{ expand(color_scene_entity) | count > 0 }}"
+            then:
+              - action: scene.turn_on
+                target:
+                  entity_id: "{{ color_scene_entity }}"
+              - delay: "00:00:01"
           - action: scene.turn_on
             target:
               entity_id: "{{ scene_entity }}"
           - action: scene.delete
             target:
-              entity_id: "{{ scene_entity }}"
+              entity_id: "{{ [scene_entity, color_scene_entity] | select('in', states.scene | map(attribute='entity_id') | list) | list }}"

@@ -40,6 +40,11 @@ can share one lamp.
 - `meeting_color` (default red `[255, 0, 0]`)
 - `meeting_brightness` (default `100` %)
 
+A light that is off when the meeting starts is switched on first, so its own
+color can be saved; after the meeting it flashes on in that color for about a
+second before turning off. Otherwise it would remember red the next time
+someone switches it on.
+
 **Caveat:** the snapshot is held in memory, so a Home Assistant restart or
 a scene reload *during* a meeting loses it — the light then stays red after
 the meeting and has to be reset by hand once.
